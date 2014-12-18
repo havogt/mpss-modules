@@ -10,10 +10,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
  * Disclaimer: The codes contained in these modules may be specific to
  * the Intel Software Development Platform codenamed Knights Ferry,
  * and the Intel product codenamed Knights Corner, and are not backward
@@ -51,12 +47,7 @@
 #else
 #define DEFAULT_WATCHDOG_TO	(30)
 #define NODE_ALIVE_TIMEOUT	(ms_info.mi_watchdog_to * HZ)
-/*
- * This timeout must be less than NODE_ALIVE_TIMEOUT because
- * SCIF_NODE_ADD_ACK response thread might block the node alive
- * acknowledgment from being sent back in time.
- */
-#define NODE_QP_TIMEOUT		((ms_info.mi_watchdog_to * 1000) / 3)
+#define NODE_QP_TIMEOUT		(100)
 #define NODE_ACCEPT_TIMEOUT	(3 * HZ)
 #define NODEQP_SEND_TO_MSEC	(3 * 1000)
 #endif

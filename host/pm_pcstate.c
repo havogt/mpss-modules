@@ -10,10 +10,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
  * Disclaimer: The codes contained in these modules may be specific to
  * the Intel Software Development Platform codenamed Knights Ferry,
  * and the Intel product codenamed Knights Corner, and are not backward
@@ -931,6 +927,7 @@ int do_idlestate_exit(mic_ctx_t *mic_ctx, bool get_ref) {
 	if(!mic_ctx)
 		return -EINVAL;
 
+	might_sleep();
 	/* If the idle_state_mutex is already obtained by another thread
 	 * try to wakeup the thread which MAY be waiting for REMOVE_NODE
 	 * responses. This way, we give priority to idle state exits than
@@ -1074,7 +1071,7 @@ int pc6_entry_start(mic_ctx_t *mic_ctx) {
 	mutex_lock(&mic_data.dd_pm.pm_idle_mutex);
 
 	if (mic_ctx->micpm_ctx.idle_state != PM_IDLE_STATE_PC3) {
-		PM_DEBUG("PC6 transition failed. Node not in DPC3\n");
+		PM_DEBUG("PC6 transition failed. Node not in PC3\n");
 		mutex_unlock(&mic_data.dd_pm.pm_idle_mutex);
 		err = -EINVAL;
 		goto exit;

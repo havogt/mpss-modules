@@ -10,10 +10,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
  * Disclaimer: The codes contained in these modules may be specific to
  * the Intel Software Development Platform codenamed Knights Ferry,
  * and the Intel product codenamed Knights Corner, and are not backward
@@ -917,7 +913,7 @@ roffset, int rma_flags);
  *
  * If rma_flags includes SCIF_RMA_USECPU, then the data is copied using
  * programmed read/writes. Otherwise the data is copied using DMA. If rma_-
- * flags includes SCIF_RMA_SYNC, then scif_readfrom() will return after the
+ * flags includes SCIF_RMA_SYNC, then scif_writeto() will return after the
  * transfer is complete. Otherwise, the transfer may be performed asynchron-
  * ously. The order in which any two aynchronous RMA operations complete
  * is non-deterministic. The synchronization functions, scif_fence_mark()/
@@ -1001,7 +997,7 @@ roffset, int rma_flags);
  *
  * If rma_flags includes SCIF_RMA_USECPU, then the data is copied using
  * programmed read/writes. Otherwise the data is copied using DMA. If rma_-
- * flags includes SCIF_RMA_SYNC, then scif_readfrom() will return after the
+ * flags includes SCIF_RMA_SYNC, then scif_vreadfrom() will return after the
  * transfer is complete. Otherwise, the transfer may be performed asynchron-
  * ously. The order in which any two aynchronous RMA operations complete
  * is non-deterministic. The synchronization functions, scif_fence_mark()/
@@ -1091,7 +1087,7 @@ int rma_flags);
  *
  * If rma_flags includes SCIF_RMA_USECPU, then the data is copied using
  * programmed read/writes. Otherwise the data is copied using DMA. If rma_-
- * flags includes SCIF_RMA_SYNC, then scif_readfrom() will return after the
+ * flags includes SCIF_RMA_SYNC, then scif_vwriteto() will return after the
  * transfer is complete. Otherwise, the transfer may be performed asynchron-
  * ously. The order in which any two aynchronous RMA operations complete
  * is non-deterministic. The synchronization functions, scif_fence_mark()/

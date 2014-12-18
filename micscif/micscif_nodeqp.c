@@ -10,10 +10,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
  * Disclaimer: The codes contained in these modules may be specific to
  * the Intel Software Development Platform codenamed Knights Ferry,
  * and the Intel product codenamed Knights Corner, and are not backward
@@ -39,13 +35,10 @@
 
 #include "mic/micscif.h"
 #include "mic/micscif_smpt.h"
-#include "mic/micscif_gtt.h"
 #include "mic/micscif_nodeqp.h"
 #include "mic/micscif_intr.h"
 #include "mic/micscif_nm.h"
-#ifndef _MIC_SCIF_
 #include "mic_common.h"
-#endif
 #include "mic/micscif_map.h"
 
 #define SBOX_MMIO_LENGTH	0x10000
@@ -60,9 +53,8 @@ static void micscif_qp_testboth(struct micscif_dev *scifdev);
 bool mic_p2p_enable = 1;
 bool mic_p2p_proxy_enable = 1;
 
-int micscif_teardown_ep(void *endpt)
+void micscif_teardown_ep(void *endpt)
 {
-	int err = 0;
 	struct endpt *ep = (struct endpt *)endpt;
 	struct micscif_qp *qp = ep->qp_info.qp;
 	if (qp) {
@@ -73,23 +65,13 @@ int micscif_teardown_ep(void *endpt)
 			scif_iounmap((void *)qp->remote_qp,
 				sizeof(struct micscif_qp), ep->remote_dev);
 		if (qp->local_buf) {
-			err = unmap_from_aperture(
+			unmap_from_aperture(
 				qp->local_buf,
 				ep->remote_dev, ENDPT_QP_SIZE);
-			if (err) {
-				printk(KERN_ERR "%s %d error %d\n", 
-					__func__, __LINE__, err);
-				return err;
-			}
 		}
 		if (qp->local_qp) {
-			err = unmap_from_aperture(qp->local_qp, ep->remote_dev,
+			unmap_from_aperture(qp->local_qp, ep->remote_dev,
 					sizeof(struct micscif_qp));
-			if (err) {
-				printk(KERN_ERR "%s %d error %d\n", 
-					__func__, __LINE__, err);
-				return err;
-			}
 		}
 		if (qp->inbound_q.rb_base)
 			kfree((void *)qp->inbound_q.rb_base);
@@ -99,8 +81,6 @@ int micscif_teardown_ep(void *endpt)
 #endif
 		WARN_ON(!list_empty(&ep->rma_info.task_list));
 	}
-
-	return err;
 }
 
 /*
@@ -967,32 +947,45 @@ interrupt_setup_error:
 }
 
 #ifdef _MIC_SCIF_
-/**
- * check_qp_state() - Check the qp state to confirm that nodes can access
- * each others qp info.
- * @qp:    Local qp info
- *
- * Returns:
- * 0 if qp state is equal to QP_ONLINE
- * 1 if qp state is equal to QP_OFFLINE
- */
-static int
-check_qp_state(struct micscif_qp *qp)
+static inline void scif_p2pdev_uninit(struct micscif_dev *peerdev)
 {
-	uint32_t wait_time = 0;
-
-	while (qp->qp_state == QP_OFFLINE) {
-		msleep(100);
-		if (wait_time == NODE_QP_TIMEOUT) {
-			printk(KERN_ERR "Warning: QP check timeout with "
-				"state %d\n", qp->qp_state);
-			return 1;
-		}
-		wait_time += 100;
-	}
-	return 0;
+	deregister_scif_intr_handler(peerdev);
+	iounmap(peerdev->mm_sbox);
+	mutex_lock(&peerdev->sd_lock);
+	peerdev->sd_state = SCIFDEV_NOTPRESENT;
+	mutex_unlock(&peerdev->sd_lock);
 }
 
+void scif_poll_qp_state(struct work_struct *work)
+{
+#define NODE_QP_RETRY 100
+	struct micscif_dev *peerdev = container_of(work, struct micscif_dev,
+							sd_p2p_dwork.work);
+	struct micscif_qp *qp = &peerdev->qpairs[0];
+
+	if (SCIFDEV_RUNNING != peerdev->sd_state)
+		return;
+	if (qp->qp_state == QP_OFFLINE) {
+		if (peerdev->sd_p2p_retry++ == NODE_QP_RETRY) {
+			printk(KERN_ERR "Warning: QP check timeout with "
+				"state %d\n", qp->qp_state);
+			goto timeout;
+		}
+		schedule_delayed_work(&peerdev->sd_p2p_dwork,
+			msecs_to_jiffies(NODE_QP_TIMEOUT));
+		return;
+	}
+	wake_up(&peerdev->sd_p2p_wq);
+	return;
+timeout:
+	printk(KERN_ERR "%s %d remote node %d offline,  state = 0x%x\n", 
+		__func__, __LINE__, peerdev->sd_node, qp->qp_state);
+	micscif_inc_node_refcnt(peerdev, 1);
+	qp->remote_qp->qp_state = QP_OFFLINE;
+	micscif_dec_node_refcnt(peerdev, 1);
+	scif_p2pdev_uninit(peerdev);
+	wake_up(&peerdev->sd_p2p_wq);
+}
 #endif
 
 /**
@@ -1070,26 +1063,12 @@ scif_nodeaddack_resp(struct micscif_dev *scifdev, struct nodemsg *msg)
 	/* accessing the peer qp. Make sure the peer is awake*/
 	micscif_inc_node_refcnt(peerdev, 1);
 	qp->remote_qp->qp_state = QP_ONLINE;
-
-	if (check_qp_state(qp))  {
-		qp->remote_qp->qp_state = QP_OFFLINE;
-		printk(KERN_ERR "%s %d remote node %d offline,  state = 0x%x\n", 
-			__func__, __LINE__, peerdev->sd_node, qp->qp_state);
-		goto remote_error;
-	}
-
 	micscif_dec_node_refcnt(peerdev, 1);
-	wake_up(&peerdev->sd_p2p_wq);
+	schedule_delayed_work(&peerdev->sd_p2p_dwork,
+		msecs_to_jiffies(NODE_QP_TIMEOUT));
 	return;
-
-remote_error:
-	micscif_dec_node_refcnt(peerdev, 1);
-	deregister_scif_intr_handler(peerdev);
 local_error:
-	iounmap(peerdev->mm_sbox);
-	mutex_lock(&peerdev->sd_lock);
-	peerdev->sd_state = SCIFDEV_NOTPRESENT;
-	mutex_unlock(&peerdev->sd_lock);
+	scif_p2pdev_uninit(peerdev);
 	wake_up(&peerdev->sd_p2p_wq);
 #endif
 }
@@ -1166,6 +1145,7 @@ scif_cnctgnt_resp(struct micscif_dev *scifdev, struct nodemsg *msg)
 		ep->peer.node = msg->src.node;
 		ep->peer.port = msg->src.port;
 		ep->qp_info.cnct_gnt_payload = msg->payload[1];
+		ep->remote_ep = msg->payload[2];
 		ep->state = SCIFEP_MAPPING;
 
 		wake_up_interruptible(&ep->conwq);
@@ -1320,7 +1300,7 @@ scif_discnct_resp(struct micscif_dev *scifdev, struct nodemsg *msg)
 	spin_lock_irqsave(&ms_info.mi_connlock, sflags);
 	list_for_each_safe(pos, tmpq, &ms_info.mi_connected) {
 		tmpep = list_entry(pos, struct endpt, list);
-		if ((uint64_t)tmpep == msg->payload[1]) {
+		if (((uint64_t)tmpep == msg->payload[1]) && ((uint64_t)tmpep->remote_ep == msg->payload[0])) {
 			list_del(pos);
 			put_conn_count(scifdev);
 			ep = tmpep;
@@ -1433,9 +1413,14 @@ scif_alloc_req(struct micscif_dev *scifdev, struct nodemsg *msg)
 			err = -ENOMEM;
 			goto error;
 		}
+		break;
 	default:
 		/* Unexpected allocation request */
-		BUG_ON(opcode != SCIF_REGISTER);
+		printk(KERN_ERR "Unexpected allocation request opcode 0x%x ep = 0x%p "
+			" scifdev->sd_state 0x%x scifdev->sd_node 0x%x\n", 
+			opcode, ep, scifdev->sd_state, scifdev->sd_node);
+		err = -EINVAL;
+		goto error;
 	};
 
 	/* The peer's allocation request is granted */
@@ -1930,156 +1915,6 @@ scif_recv_signal_resp(struct micscif_dev *scifdev, struct nodemsg *msg)
 	mutex_unlock(&ep->rma_info.rma_lock);
 }
 
-#ifdef CONFIG_ML1OM
-#ifdef _MIC_SCIF_
-/**
- * scif_recv_map_gtt: Handle SCIF_MAP_GTT request
- * @msg:	Interrupt message
- *
- * The peer has requested a GTT map operation.
- */
-static __always_inline void
-scif_recv_map_gtt(struct micscif_dev *scifdev, struct nodemsg *msg)
-{
-	struct endpt *ep = (struct endpt *)msg->payload[0];
-	struct reg_range_t *window = (struct reg_range_t *)msg->payload[1];
-	int i, j, start = msg->payload[2], end = msg->payload[3];
-	struct allocmsg *alloc = &window->alloc_handle;
-	struct reg_range_t *remote_window;
-	dma_addr_t *phys_lookup, *tmp = NULL;
-	int err, remaining_nr_pages = end - start, loop_nr_pages, offset;
-
-	RMA_MAGIC(window);
-
-	msg->payload[0] = ep->remote_ep;
-	msg->payload[1] = (uint64_t)window->peer_window;
-
-	for (j = start; j < end; j++) {
-		if (!window->phys_addr[j]) {
-			err = map_page_into_aperture(&window->phys_addr[j],
-				window->pinned_pages->pages[j],
-				ep->remote_dev);
-			if (err)
-				goto map_error;
-		}
-	}
-	remote_window = scif_ioremap(alloc->phys_addr,
-		sizeof(*window), ep->remote_dev);
-
-	RMA_MAGIC(remote_window);
-
-	phys_lookup = scif_ioremap(remote_window->phys_addr_lookup.offset,
-		remote_window->nr_lookup *
-		sizeof(*remote_window->phys_addr_lookup.lookup),
-		ep->remote_dev);
-
-	/* Compute the index of the starting lookup entries. 21 == 2MB Shift */
-	j = align_low(start * PAGE_SIZE, ((2) * 1024 * 1024)) >> 21;
-	i = j * NR_PHYS_ADDR_IN_PAGE;
-
-	while (remaining_nr_pages) {
-		offset = (start & (NR_PHYS_ADDR_IN_PAGE - 1));
-		loop_nr_pages = NR_PHYS_ADDR_IN_PAGE - offset;
-		if (remaining_nr_pages < loop_nr_pages)
-			loop_nr_pages = remaining_nr_pages;
-		tmp = scif_ioremap(phys_lookup[j],
-			loop_nr_pages * sizeof(*window->phys_addr),
-			ep->remote_dev);
-		memcpy_toio(tmp + offset, &window->phys_addr[i] + offset, 
-			loop_nr_pages * sizeof(*window->phys_addr));
-		serializing_request(tmp + offset);
-		smp_mb();
-		scif_iounmap(tmp, PAGE_SIZE, ep->remote_dev);
-		remaining_nr_pages -= loop_nr_pages;
-		start += loop_nr_pages;
-		i += NR_PHYS_ADDR_IN_PAGE;
-		j++;
-	}
-	scif_iounmap(phys_lookup,
-		remote_window->nr_lookup *
-		sizeof(*remote_window->phys_addr_lookup.lookup), ep->remote_dev);
-	scif_iounmap(remote_window, sizeof(*remote_window), ep->remote_dev);
-	msg->uop = SCIF_MAP_GTT_ACK;
-	micscif_nodeqp_send(ep->remote_dev, msg, ep);
-	return;
-map_error:
-	for (i = start; i < j; i++) {
-		if (window->phys_addr[j]) {
-			err = unmap_from_aperture(
-				window->phys_addr[j],
-				ep->remote_dev,
-				PAGE_SIZE);
-			window->phys_addr[j] = 0;
-			BUG_ON(err < 0);
-		}
-	}
-	msg->uop = SCIF_MAP_GTT_NACK;
-	micscif_nodeqp_send(ep->remote_dev, msg, ep);
-}
-
-/**
- * scif_recv_unmap_gtt: Handle SCIF_UNMAP_GTT request
- * @msg:	Interrupt message
- *
- * The peer has requested a GTT unmap operation.
- */
-static __always_inline void
-scif_recv_unmap_gtt(struct micscif_dev *scifdev, struct nodemsg *msg)
-{
-	struct endpt *ep = (struct endpt *)msg->payload[0];
-	struct reg_range_t *window = (struct reg_range_t *)msg->payload[1];
-	int err, j, start = msg->payload[2], end = msg->payload[3];
-
-	RMA_MAGIC(window);
-
-	for (j = start; j < end; j++) {
-		if (window->phys_addr[j]) {
-			err = unmap_from_aperture(
-				window->phys_addr[j],
-				ep->remote_dev,
-				PAGE_SIZE);
-			window->phys_addr[j] = 0;
-			BUG_ON(err < 0);
-		}
-	}
-}
-
-#else
-
-/**
- * scif_recv_map_gtt_ack: Handle SCIF_MAP_GTT_ACK request
- * @msg:	Interrupt message
- *
- * The peer has acked a GTT map operation.
- */
-static __always_inline void
-scif_recv_map_gtt_ack(struct micscif_dev *scifdev, struct nodemsg *msg)
-{
-	struct reg_range_t *window =
-		(struct reg_range_t *)msg->payload[1];
-	RMA_MAGIC(window);
-	window->gttmap_state = OP_COMPLETED;
-	wake_up(&window->gttmapwq);
-}
-
-/**
- * scif_recv_map_gtt_nack: Handle SCIF_MAP_GTT_NACK request
- * @msg:	Interrupt message
- *
- * The peer has nacked a GTT map operation.
- */
-static __always_inline void
-scif_recv_map_gtt_nack(struct micscif_dev *scifdev, struct nodemsg *msg)
-{
-	struct reg_range_t *window =
-		(struct reg_range_t *)msg->payload[1];
-	RMA_MAGIC(window);
-	window->gttmap_state = OP_FAILED;
-	wake_up(&window->gttmapwq);
-}
-#endif
-#endif
-
 /*
  * scif_node_wake_up_ack: Handle SCIF_NODE_WAKE_UP_ACK message
  * @msg: Interrupt message
@@ -2243,77 +2078,6 @@ scif_node_alive_ack(struct micscif_dev *scifdev, struct nodemsg *msg)
 }
 #endif
 
-#ifdef CONFIG_ML1OM
-#ifdef _MIC_SCIF_
-/**
- * scif_dma_gtt_map: Handle SCIF_DMA_GTT_MAP request.
- * @msg:	Interrupt message
- *
- * The peer has requested a unaligned DMA GTT map operation.
- */
-static __always_inline void
-scif_dma_gtt_map(struct micscif_dev *scifdev, struct nodemsg *msg)
-{
-	int err;
-	phys_addr_t out_phys;
-
-	if (!(micscif_map_gtt(&out_phys,
-		msg->payload[1], msg->payload[2], scifdev))) {
-		msg->uop = SCIF_DMA_GTT_ACK;
-		msg->payload[1] = out_phys;
-	} else
-		msg->uop = SCIF_DMA_GTT_NACK;
-	if ((err = micscif_nodeqp_send(&scif_dev[0], msg, NULL)))
-		printk(KERN_ERR "%s %d err %d\n", __func__, __LINE__, err);
-}
-
-/**
- * scif_dma_gtt_unmap: Handle SCIF_DMA_GTT_UNMAP request.
- * @msg:	Interrupt message
- *
- * The peer has requested a unaligned DMA GTT map operation.
- */
-static __always_inline void
-scif_dma_gtt_unmap(struct micscif_dev *scifdev, struct nodemsg *msg)
-{
-	micscif_unmap_gtt_offset(msg->payload[0], msg->payload[1], scifdev);
-}
-#else
-/**
- * scif_dma_gtt_ack: Handle SCIF_DMA_GTT_ACK request
- * @msg:	Interrupt message
- *
- * The peer has acked a GTT map operation.
- */
-static __always_inline void
-scif_dma_gtt_ack(struct micscif_dev *scifdev, struct nodemsg *msg)
-{
-	struct mic_copy_work *work =
-		(struct mic_copy_work *)msg->payload[0];
-	work->gttmap_state = OP_COMPLETED;
-	work->gtt_offset = msg->payload[1];
-	work->gtt_length = msg->payload[2];
-	wake_up(&work->gttmapwq);
-}
-
-/**
- * scif_dma_gtt_nack: Handle SCIF_DMA_GTT_NACK request
- * @msg:	Interrupt message
- *
- * The peer has nacked a GTT map operation.
- */
-static __always_inline void
-scif_dma_gtt_nack(struct micscif_dev *scifdev, struct nodemsg *msg)
-{
-	struct mic_copy_work *work =
-		(struct mic_copy_work *)msg->payload[0];
-	work->gttmap_state = OP_FAILED;
-	work->gtt_offset = -1;
-	wake_up(&work->gttmapwq);
-}
-
-#endif
-#endif
 
 #ifdef _MIC_SCIF_
 static __always_inline void
@@ -2411,6 +2175,7 @@ scif_node_connect_resp(struct micscif_dev *scifdev, struct nodemsg *msg)
 			ppi_list);
 			if (p2p->ppi_peer_id == dev_j->sd_node) {
 				mutex_unlock(&ms_info.mi_conflock);
+				micscif_dec_node_refcnt(dev_i, 1);
 				return;
 			}
 		}
@@ -2662,30 +2427,17 @@ void (*scif_intr_func[SCIF_MAX_MSG + 1])(struct micscif_dev *, struct nodemsg *m
 	scif_recv_signal_resp,		// SCIF_SIG_ACK
 	scif_recv_signal_resp,		// SCIF_SIG_NACK
 #ifdef _MIC_SCIF_
-#ifdef CONFIG_ML1OM
-	scif_recv_map_gtt,		// SCIF_MAP_GTT
-#else
 	scif_msg_unknown,
-#endif
-	scif_msg_unknown,		// SCIF_MAP_GTT_ACK Not on card
-	scif_msg_unknown,		// SCIF_MAP_GTT_NACK Not on card
-#ifdef CONFIG_ML1OM
-	scif_recv_unmap_gtt,		// SCIF_UNMAP_GTT
-#else
 	scif_msg_unknown,
-#endif
+	scif_msg_unknown,
+	scif_msg_unknown,
 	scif_msg_unknown,		// SCIF_NODE_CREATE_DEP Not on card
 	scif_msg_unknown,		// SCIF_NODE_DESTROY_DEP Not on card
 #else
-	scif_msg_unknown,		// SCIF_MAP_GTT Not on host
-#ifdef CONFIG_ML1OM
-	scif_recv_map_gtt_ack,		// SCIF_MAP_GTT_ACK
-	scif_recv_map_gtt_nack,		// SCIF_MAP_GTT_NACK	40
-#else
 	scif_msg_unknown,
 	scif_msg_unknown,
-#endif
-	scif_msg_unknown,		// SCIF_UNMAP_GTT Not on host
+	scif_msg_unknown,
+	scif_msg_unknown,
 	scif_node_create_dep,		// SCIF_NODE_CREATE_DEP
 	scif_node_destroy_dep,		// SCIF_NODE_DESTROY_DEP
 #endif
@@ -2708,24 +2460,10 @@ void (*scif_intr_func[SCIF_MAX_MSG + 1])(struct micscif_dev *, struct nodemsg *m
 	scif_node_alive_ack,		// SCIF_NODE_ALIVE_ACK
 	scif_msg_unknown,		// SCIF_NODE_ALIVE not on Host
 #endif
-#ifdef CONFIG_ML1OM
-#ifdef _MIC_SCIF_
-	scif_dma_gtt_map,		// SCIF_DMA_GTT_MAP on KNF
-	scif_msg_unknown,
-	scif_msg_unknown,
-	scif_dma_gtt_unmap,		// SCIF_DMA_GTT_MAP on KNF
-#else
-	scif_msg_unknown,
-	scif_dma_gtt_ack,		// SCIF_DMA_GTT_ACK only on KNF Host
-	scif_dma_gtt_nack,		// SCIF_DMA_GTT_ACK only on KNF Host
-	scif_msg_unknown,
-#endif
-#else
 	scif_msg_unknown,
 	scif_msg_unknown,
 	scif_msg_unknown,
 	scif_msg_unknown,
-#endif
 #ifdef _MIC_SCIF_
 	scif_proxy_dma,			// SCIF_PROXY_DMA only for MIC
 	scif_proxy_ordered_dma,		// SCIF_PROXY_ORDERED_DMA only for MIC
@@ -2957,7 +2695,7 @@ int micscif_setup_loopback_qp(struct micscif_dev *scifdev)
 	snprintf(scifdev->sd_loopb_wqname, sizeof(scifdev->sd_loopb_wqname),
 			"SCIF LOOPB %d", scifdev->sd_node);
 	if (!(scifdev->sd_loopb_wq =
-		create_singlethread_workqueue(scifdev->sd_loopb_wqname))){
+		__mic_create_singlethread_workqueue(scifdev->sd_loopb_wqname))){
 		err = -ENOMEM;
 		goto destroy_intr_wq;
 	}
@@ -3151,9 +2889,9 @@ static void micscif_qp_testboth(struct micscif_dev *scifdev)
 	snprintf(scifdev->consumer_name, sizeof(scifdev->consumer_name),
 		 "CONSUMER %d", scifdev->sd_node);
 	scifdev->producer =
-		create_singlethread_workqueue(scifdev->producer_name);
+		__mic_create_singlethread_workqueue(scifdev->producer_name);
 	scifdev->consumer =
-		create_singlethread_workqueue(scifdev->consumer_name);
+		__mic_create_singlethread_workqueue(scifdev->consumer_name);
 
 	INIT_WORK(&scifdev->producer_work, micscif_rb_trigger_producer);
 	INIT_WORK(&scifdev->consumer_work, micscif_rb_trigger_consumer);

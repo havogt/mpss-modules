@@ -10,10 +10,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
  * Disclaimer: The codes contained in these modules may be specific to
  * the Intel Software Development Platform codenamed Knights Ferry,
  * and the Intel product codenamed Knights Corner, and are not backward
@@ -1556,7 +1552,7 @@ void micscif_watchdog_handler(struct work_struct *work)
 	}
 	case SYSTEM_BOOTING:
 	case SYSTEM_RUNNING:
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,5,0)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0))
 	case SYSTEM_SUSPEND_DISK:
 #endif
 		break;

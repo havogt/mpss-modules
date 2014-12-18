@@ -10,10 +10,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
  * Disclaimer: The codes contained in these modules may be specific to
  * the Intel Software Development Platform codenamed Knights Ferry,
  * and the Intel product codenamed Knights Corner, and are not backward
@@ -140,7 +136,9 @@ scif_process_ioctl(struct file *f, unsigned int cmd, uint64_t arg)
 	void __user *argp = (void __user *)arg;
 	int err = 0;
 	struct scifioctl_msg request;
+	bool non_block = false;
 
+	non_block = !!(f->f_flags & O_NONBLOCK);
 
 	switch (cmd) {
 	case SCIF_BIND:
@@ -172,7 +170,7 @@ scif_process_ioctl(struct file *f, unsigned int cmd, uint64_t arg)
 			return -EFAULT;
 		}
 
-		if ((err = __scif_connect(priv->epd, &req.peer)) < 0) {
+		if ((err = __scif_connect(priv->epd, &req.peer, non_block)) < 0) {
 			return err;
 		}
 

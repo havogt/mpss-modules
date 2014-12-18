@@ -10,10 +10,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
  * Disclaimer: The codes contained in these modules may be specific to
  * the Intel Software Development Platform codenamed Knights Ferry,
  * and the Intel product codenamed Knights Corner, and are not backward
@@ -281,7 +277,6 @@ dma_addr_t smpt_op(int bid, uint64_t dma_addr,
 	mic_ctx_t *mic_ctx = get_per_dev_ctx(bid);
 	mic_smpt_t *mic_smpt = mic_ctx->mic_smpt;
 
-	might_sleep();
 	if (micpm_get_reference(mic_ctx, true))
 		goto exit;
 	spin_lock_irqsave(&mic_ctx->smpt_lock, flags);

@@ -231,8 +231,12 @@ static ssize_t read_vmcore(struct file *file, char __user *buffer,
 	u64 start, nr_bytes;
 	struct vmcore *curr_m = NULL;
 	struct inode *inode = file->f_path.dentry->d_inode;
-
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
 	mic_ctx_t *mic_ctx = PDE_DATA(inode);
+#else
+	struct proc_dir_entry *entry = PDE(inode);
+	mic_ctx_t *mic_ctx = entry->data;
+#endif
 
 	if (buflen == 0 || *fpos >= mic_ctx->vmcore_size)
 		return 0;
@@ -812,11 +816,10 @@ int vmcore_create(mic_ctx_t *mic_ctx)
 			return rc;
 		}
 	}
-	if (mic_ctx->vmcore_dir)
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
-		mic_ctx->vmcore_dir->size = mic_ctx->vmcore_size;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
 #else
-		proc_set_size(mic_ctx->vmcore_dir, mic_ctx->vmcore_size);
+	if (mic_ctx->vmcore_dir)
+		mic_ctx->vmcore_dir->size = mic_ctx->vmcore_size;
 #endif
 	return 0;
 }

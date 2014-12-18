@@ -1179,16 +1179,20 @@ mic_shutdown_host_doorbell_intr_handler(mic_ctx_t *mic_ctx, int doorbell)
 	return 0;
 }
 
-static int ramoops_show(struct seq_file *m, void *v)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
+static int
+ramoops_proc_show(struct seq_file *m, void *data)
 {
-	uint64_t data = (uint64_t)m->private;
-	uint64_t id = data & 0xffffffff;
-	uint64_t entry = data >> 32;
+	uint64_t id = ((uint64_t)data) & 0xffffffff;
+	uint64_t entry = ((uint64_t)data) >> 32;
 	struct list_head *pos, *tmpq;
 	bd_info_t *bd = NULL;
 	mic_ctx_t *mic_ctx = NULL;
 	char *record;
+	char *end;
 	int size = 0;
+	int l = 0;
+	char *output;
 	unsigned long flags;
 
 	list_for_each_safe(pos, tmpq, &mic_data.dd_bdlist) {
@@ -1206,23 +1210,99 @@ static int ramoops_show(struct seq_file *m, void *v)
 	record = mic_ctx->ramoops_va[entry];
 	if (record == NULL) {
 		spin_unlock_irqrestore(&mic_ctx->ramoops_lock, flags);
+		return -EEXIST;
+	}
+
+	size = mic_ctx->ramoops_size;
+	end = record + size;
+
+	if ((output = kzalloc(size, GFP_ATOMIC)) == NULL) {
+		spin_unlock_irqrestore(&mic_ctx->ramoops_lock, flags);
+		return -ENOMEM;
+	}
+
+	l += scnprintf(output, size, "%s", record);
+
+	spin_unlock_irqrestore(&mic_ctx->ramoops_lock, flags);
+
+	seq_printf(m, "%s", output);
+	return 0;
+}
+
+static int
+ramoops_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ramoops_proc_show, NULL);
+}
+
+struct file_operations ramoops_proc_fops = {
+	.open		= ramoops_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+        .release 	= single_release,
+};
+
+#else // LINUX VERSION
+static int
+ramoops_read(char *buf, char **start, off_t offset, int len, int *eof, void *data)
+{
+	uint64_t id = ((uint64_t)data) & 0xffffffff;
+	uint64_t entry = ((uint64_t)data) >> 32;
+	struct list_head *pos, *tmpq;
+	bd_info_t *bd = NULL;
+	mic_ctx_t *mic_ctx = NULL;
+	char *record;
+	char *end;
+	int size = 0;
+	int l = 0;
+	int left_to_read;
+	char *output;
+	unsigned long flags;
+
+	list_for_each_safe(pos, tmpq, &mic_data.dd_bdlist) {
+		bd = list_entry(pos, bd_info_t, bi_list);
+		mic_ctx = &bd->bi_ctx;
+		if (mic_ctx->bi_id == id)
+			break;
+	}
+
+	if (mic_ctx == NULL)
+		return 0;
+
+	spin_lock_irqsave(&mic_ctx->ramoops_lock, flags);
+
+	record = mic_ctx->ramoops_va[entry];
+	if (record == NULL) {
+		spin_unlock_irqrestore(&mic_ctx->ramoops_lock, flags);
+		*eof = 1;
 		return 0;
 	}
 
 	size = mic_ctx->ramoops_size;
-	if (record[size-1] == 0)
-		size = strlen(record);
+	end = record + size;
 
-	seq_write(m, record, size);
+	if ((output = kzalloc(size, GFP_ATOMIC)) == NULL) {
+		spin_unlock_irqrestore(&mic_ctx->ramoops_lock, flags);
+		return -ENOMEM;
+	}
+
+	l += scnprintf(output, size, "%s", record);
+
 	spin_unlock_irqrestore(&mic_ctx->ramoops_lock, flags);
 
-	return 0;
-}
+	left_to_read = l - offset;
+	if (left_to_read < 0)
+		left_to_read = 0;
+	if (left_to_read == 0)
+		*eof = 1;
 
-static int ramoops_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, ramoops_show, PDE_DATA(inode));
+	left_to_read = min(len, left_to_read);
+	memcpy(buf, output + offset, left_to_read);
+	kfree(output);
+	*start = buf;
+	return left_to_read;
 }
+#endif // LINUX VERSION
 
 static const struct file_operations ramoops_fops = {
 	.owner   = THIS_MODULE,

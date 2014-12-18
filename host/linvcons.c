@@ -93,7 +93,7 @@ micvcons_create(int num_bds)
 	micvcons_tty->driver_name = MICVCONS_DEVICE_NAME;
 	micvcons_tty->name = MICVCONS_DEVICE_NAME;
 	micvcons_tty->major = 0;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,4,0)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0))
 	micvcons_tty->minor_num = num_bds;
 #endif
 	micvcons_tty->minor_start = 0;
@@ -201,10 +201,8 @@ micvcons_open(struct tty_struct * tty, struct file * filp)
 		port->dp_canread = 1;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,9,0)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0))
 	tty->low_latency = 0;
-#else
-	tty->port->low_latency = 0;
 #endif
 
 	if (!port->dp_tty)
@@ -339,14 +337,14 @@ micvcons_readchars(micvcons_port_t *port)
 		ret = micscif_rb_get_next(port->dp_in, buf, get_count);
 		micscif_rb_update_read_ptr(port->dp_in);
 		if (port->dp_reader && port->dp_canread) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,9,0)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
+			if ((bytes_read = tty_insert_flip_string(
+					&port->port, buf, get_count)) != 0)
+				tty_flip_buffer_push(&port->port);
+#else
 			bytes_read = tty_insert_flip_string(port->dp_tty, 
 								buf, get_count);
 			tty_flip_buffer_push(port->dp_tty);
-#else
-			struct tty_port *tp = port->dp_tty->port;
-			bytes_read = tty_insert_flip_string(tp, buf, get_count);
-			tty_flip_buffer_push(tp);
 #endif
 			bytes_total += bytes_read;
 			if (bytes_read != get_count) {
