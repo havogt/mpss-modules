@@ -2731,7 +2731,7 @@ unsigned int __scif_pollfd(struct file *f, poll_table *wait, struct endpt *ep)
 	spin_lock_irqsave(&ep->lock, sflags);
 
 	if (ep->conn_async_state == ASYNC_CONN_INPROGRESS) {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0))
 		if (!wait || poll_requested_events(wait) & SCIF_POLLOUT) {
 #else
 		if (!wait || wait->key & SCIF_POLLOUT) {
@@ -2748,7 +2748,7 @@ unsigned int __scif_pollfd(struct file *f, poll_table *wait, struct endpt *ep)
 
 	/* Is it OK to use wait->key?? */
 	if (ep->state == SCIFEP_LISTENING) {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0))
 		if (!wait || poll_requested_events(wait) & SCIF_POLLIN) {
 #else
 		if (!wait || wait->key & SCIF_POLLIN) {
@@ -2764,7 +2764,7 @@ unsigned int __scif_pollfd(struct file *f, poll_table *wait, struct endpt *ep)
 		goto return_scif_poll;
 	}
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0))
 	if (!wait || poll_requested_events(wait) & SCIF_POLLIN) {
 #else
 	if (!wait || wait->key & SCIF_POLLIN) {
@@ -2783,7 +2783,7 @@ unsigned int __scif_pollfd(struct file *f, poll_table *wait, struct endpt *ep)
 			mask |= SCIF_POLLIN;
 	}
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0))
 	if (!wait || poll_requested_events(wait) & SCIF_POLLOUT) {
 #else
 	if (!wait || wait->key & SCIF_POLLOUT) {
@@ -3005,7 +3005,7 @@ scif_mmap(struct vm_area_struct *vma, scif_epd_t epd)
 	 * the VMA is actually backed by physical pages in the remote
 	 * node's physical memory and not via a struct page.
 	 */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0))
 	vma->vm_flags |= VM_DONTCOPY | VM_DONTEXPAND | VM_DONTDUMP | VM_PFNMAP;
 #else
 	vma->vm_flags |= VM_DONTCOPY | VM_DONTEXPAND | VM_RESERVED | VM_PFNMAP;

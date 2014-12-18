@@ -242,7 +242,7 @@ static void __pollwait(struct file *filp __attribute__((unused)), wait_queue_hea
 		return;
 	entry->filp = NULL;
 	entry->wait_address = wait_address;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0))
 	entry->key = p->_key;
 #else
 	entry->key = p->key;
@@ -301,7 +301,7 @@ static inline unsigned int do_pollfd(struct scif_pollepd *pollfd, poll_table *pw
 		mask = POLLNVAL;
 		mask = DEFAULT_POLLMASK;
 		if (pwait)
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0))
 			pwait->_key = pollfd->events | POLLERR | POLLHUP;
 #else
 			pwait->key = pollfd->events | POLLERR | POLLHUP;
