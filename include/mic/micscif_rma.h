@@ -10,10 +10,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
  * Disclaimer: The codes contained in these modules may be specific to
  * the Intel Software Development Platform codenamed Knights Ferry,
  * and the Intel product codenamed Knights Corner, and are not backward
@@ -482,7 +478,7 @@ void micscif_rma_put_task(struct endpt *ep, int nr_pages);
 void micscif_cleanup_rma_for_zombies(int node);
 
 #ifdef _MIC_SCIF_
-int micscif_teardown_proxy_dma(struct endpt *ep);
+void micscif_teardown_proxy_dma(struct endpt *ep);
 #endif
 
 static __always_inline
@@ -792,6 +788,34 @@ micscif_get_dma_addr(struct reg_range_t *window, uint64_t off, size_t *nr_bytes,
 }
 
 /*
+ * scif_memset:
+ * @va: kernel virtual address
+ * @c: The byte used to fill the memory
+ * @size: Buffer size
+ *
+ * Helper API which fills size bytes of memory pointed to by va with the
+ * constant byte c. This API fills the memory in chunks of 4GB - 1 bytes
+ * for a single invocation of memset(..) to work around a kernel bug in
+ * x86_64 @ https://bugzilla.kernel.org/show_bug.cgi?id=27732
+ * where memset(..) does not do "ANY" work for size >= 4GB.
+ * This kernel bug has been fixed upstream in v3.2 via the commit
+ * titled "x86-64: Fix memset() to support sizes of 4Gb and above"
+ * but has not been backported to distributions like RHEL 6.3 yet.
+ */
+static __always_inline void scif_memset(char *va, int c, size_t size)
+{
+	size_t loop_size;
+	const size_t four_gb = 4 * 1024 * 1024 * 1024ULL;
+
+	while (size) {
+		loop_size = min(size, four_gb - 1);
+		memset(va, c, loop_size);
+		size -= loop_size;
+		va += loop_size;
+	}
+}
+
+/*
  * scif_zalloc:
  * @size: Size of the allocation request.
  *
@@ -816,7 +840,7 @@ static __always_inline void *scif_zalloc(size_t size)
 		return NULL;
 
 	/* TODO: Use vzalloc once kernel supports it */
-	memset(ret, 0, size);
+	scif_memset(ret, 0, size);
 done:
 #ifdef RMA_DEBUG
 	atomic_long_add_return(align, &ms_info.rma_alloc_cnt);

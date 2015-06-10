@@ -10,10 +10,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
  * Disclaimer: The codes contained in these modules may be specific to
  * the Intel Software Development Platform codenamed Knights Ferry,
  * and the Intel product codenamed Knights Corner, and are not backward
@@ -40,6 +36,7 @@
 #include "mic/micscif.h"
 #include "mic/micscif_intr.h"
 #include "mic/micscif_nodeqp.h"
+#include "mic_common.h"
 
 /* Runs in the context of sd_intr_wq */
 static void micscif_intr_bh_handler(struct work_struct *work)
@@ -65,7 +62,7 @@ int micscif_setup_interrupts(struct micscif_dev *scifdev)
 
 		/* FIXME: Fix windows */
 		if (!(scifdev->sd_intr_wq =
-			create_singlethread_workqueue(scifdev->sd_intr_wqname)))
+			__mic_create_singlethread_workqueue(scifdev->sd_intr_wqname)))
 			return -ENOMEM;
 
 		INIT_WORK(&scifdev->sd_intr_bh, micscif_intr_bh_handler);

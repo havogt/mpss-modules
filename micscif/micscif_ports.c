@@ -10,10 +10,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
  * Disclaimer: The codes contained in these modules may be specific to
  * the Intel Software Development Platform codenamed Knights Ferry,
  * and the Intel product codenamed Knights Corner, and are not backward
@@ -331,7 +327,7 @@ get_scif_port(void)
 		init_scif_array();
 
 	spin_lock(&port_lock);
-	if (first_free == PORTS_ARRAY_SIZE) {	/* Pool is empty */
+	if (first_free >= PORTS_ARRAY_SIZE) {	/* Pool is empty */
 		port = 0;
 		port_err++;
 		goto out;

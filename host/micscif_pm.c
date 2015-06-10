@@ -10,10 +10,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
  * Disclaimer: The codes contained in these modules may be specific to
  * the Intel Software Development Platform codenamed Knights Ferry,
  * and the Intel product codenamed Knights Corner, and are not backward
@@ -53,7 +49,8 @@ void
 micpm_decrement_clients(void)
 {
 	if(unlikely(atomic_dec_return(&mic_data.dd_pm.connected_clients) < 0)) {
-		BUG_ON(atomic_read(&mic_data.dd_pm.connected_clients) < 0);
+		PM_DEBUG("connected_clients is negative (%d)\n",
+			atomic_read(&mic_data.dd_pm.connected_clients));
 	}
 	return;
 }
@@ -180,7 +177,7 @@ mic_pm_send(mic_ctx_t *mic_ctx, void *msg, uint32_t len)
 	err = scif_send(epd, msg, len, PM_SEND_MODE);
 	/*scif_send returns the number of bytes returned on success */
 	if(err <= 0) {
-		printk("scif_send to node: %d port: %d failed with error %d\n", 
+		PM_DEBUG("scif_send to node: %d port: %d failed with error %d\n",
 				epd->peer.node, epd->peer.port, err);
 	} else {
 		PM_DEBUG("Bytes sent = %d\n",err);
@@ -348,6 +345,14 @@ mic_pm_handle_message(mic_ctx_t *mic_ctx, pm_recv_msg_t *recv_msg)
 		res = handle_pc3_ready(mic_ctx);
 		break;
 	case PM_MESSAGE_OPEN_ACK:
+		/*Size of the payload needs to be equal to what the
+		 * host is trying to cast it to
+		 */
+		if (sizeof(pm_msg_pm_options) != recv_msg->msg_header.len) {
+			printk(KERN_ERR "Incompatible PM message. Opcode = %d\n", 
+				recv_msg->msg_header.opcode);
+			return -EINVAL;
+		}
 		res = handle_open_ack(mic_ctx,
 			((pm_msg_pm_options *) recv_msg->msg_body));
 		break;
@@ -698,7 +703,7 @@ setup_pm_workqueues(mic_ctx_t *mic_ctx)
 		 "PM_RESUME_WQ %d", mic_get_scifnode_id(mic_ctx));
 
 	if (!(mic_ctx->micpm_ctx.resume.wq
-		= create_singlethread_workqueue(
+		= __mic_create_singlethread_workqueue(
 				mic_ctx->micpm_ctx.resume.wq_name))) {
 		err = -ENOMEM;
 		goto err;
@@ -710,7 +715,7 @@ setup_pm_workqueues(mic_ctx_t *mic_ctx)
 			 "RECV_WORK_Q %d", mic_get_scifnode_id(mic_ctx));
 
 	if (!(mic_ctx->micpm_ctx.recv.wq
-			= create_singlethread_workqueue(
+			= __mic_create_singlethread_workqueue(
 					mic_ctx->micpm_ctx.recv.wq_name))) {
 		err = -ENOMEM;
 		goto err;
@@ -722,7 +727,7 @@ setup_pm_workqueues(mic_ctx_t *mic_ctx)
 		 "MSG_HANDLER_WQ %d", mic_get_scifnode_id(mic_ctx));
 
 	if (!(mic_ctx->micpm_ctx.handle_msg.wq
-			= create_singlethread_workqueue(
+			= __mic_create_singlethread_workqueue(
 					mic_ctx->micpm_ctx.handle_msg.wq_name))) {
 		err = -ENOMEM;
 		goto err;
@@ -734,7 +739,7 @@ setup_pm_workqueues(mic_ctx_t *mic_ctx)
 			 "PC6_WORK_Q %d", mic_get_scifnode_id(mic_ctx));
 
 	if (!(mic_ctx->micpm_ctx.pc6_entry_wq
-		= create_singlethread_workqueue(
+		= __mic_create_singlethread_workqueue(
 				mic_ctx->micpm_ctx.pc6_wq_name))) {
 		err = -ENOMEM;
 		goto err;
@@ -782,7 +787,7 @@ int micpm_init()
 			sizeof(mic_data.dd_pm.accept.wq_name),"PM ACCEPT");
 
 	mic_data.dd_pm.accept.wq =
-			create_singlethread_workqueue(mic_data.dd_pm.accept.wq_name);
+			__mic_create_singlethread_workqueue(mic_data.dd_pm.accept.wq_name);
 	if (!mic_data.dd_pm.accept.wq){
 		err = -ENOMEM;
 		PM_DEBUG("create workqueue returned null\n");
@@ -819,9 +824,8 @@ micpm_uninit(void)
 	scif_epd_t epd = mic_data.dd_pm.epd;
 
 	if(atomic_read(&mic_data.dd_pm.connected_clients) > 0) {
-		PM_DEBUG("Cannot un-initialize PM component as there are still some"
-			    "connected clients\n");
-		return;
+		PM_DEBUG("connected_clients is nonzero (%d)\n",
+			atomic_read(&mic_data.dd_pm.connected_clients));
 	}
 	err = scif_close(epd);
 	if (err != 0) {
@@ -865,7 +869,6 @@ micpm_probe(mic_ctx_t * mic_ctx) {
 
 	mutex_init (&mic_ctx->micpm_ctx.msg_mutex);
 	INIT_LIST_HEAD(&mic_ctx->micpm_ctx.msg_list);
-	init_waitqueue_head(&mic_ctx->micpm_ctx.dpc3_wq);
 	init_waitqueue_head(&mic_ctx->micpm_ctx.disc_wq);
 	atomic_set(&mic_ctx->micpm_ctx.pm_ref_cnt, 0);
 	mic_ctx->micpm_ctx.pc6_timeout = PC6_TIMER;
@@ -971,10 +974,8 @@ micpm_stop(mic_ctx_t *mic_ctx) {
 				" node: %d port:%d\n", mic_ctx->micpm_ctx.pm_epd->peer.node,
 				mic_ctx->micpm_ctx.pm_epd->peer.port);
 		err = scif_close(mic_ctx->micpm_ctx.pm_epd);
-		if(err!= 0) {
-			PM_DEBUG("Error Closing end point\n");
-			goto exit;
-		}
+		if(err!= 0)
+			PM_DEBUG("Scif_close failed with error %d\n",err);
 		mic_ctx->micpm_ctx.pm_epd = NULL;
 		micpm_decrement_clients();
 	}
@@ -987,7 +988,7 @@ micpm_stop(mic_ctx_t *mic_ctx) {
 
 	/* Process messages in message queue */
 	pm_process_msg_list(mic_ctx);
-exit:
+
 	if (!node_lost)
 		micpm_put_reference(mic_ctx);
 	mutex_unlock(&mic_data.dd_pm.pm_accept_mutex);

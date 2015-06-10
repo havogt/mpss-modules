@@ -10,10 +10,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
  * Disclaimer: The codes contained in these modules may be specific to
  * the Intel Software Development Platform codenamed Knights Ferry,
  * and the Intel product codenamed Knights Corner, and are not backward
@@ -41,6 +37,16 @@
 
 #ifndef __IO_INTERFACE_H__
 #define __IO_INTERFACE_H__
+
+/*
+ * The host driver exports sysfs entries in
+ *	/sys/class/mic/micX/
+ * The "/sys/class/mic/micX/state" entry reflects the state of the
+ * card as it transitions from hardware reset through booting an image
+ *
+ * All the other entries have valid values when the state entry is either
+ * "ready" or "online"
+ */
 
 /*
  * -----------------------------------------
@@ -85,6 +91,9 @@ typedef enum {
  * \param len				uos escape opecode
  *
  * This structure is used for IOCTL_FLASHCMD.
+ *
+ * This IOCTL can only be issued when /sys/class/mic/mic0/state returns "online"
+ * after it has been set to "boot:flash"
  */
 struct ctrlioctl_flashcmd {
 	uint32_t brdnum;
